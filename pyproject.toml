@@ -1,0 +1,13 @@
+[project]
+name = "dia-dementia-assistant"
+version = "0.1.0"
+description = "DIA - Dementia Information Assistant powered by Google Gemini with RAG retrieval"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-genai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+dia = "main:main"

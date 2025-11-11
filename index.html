@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DIA - Dementia Information Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 900px;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px 30px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+            background: #f7f9fc;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+
+        .message.user .message-avatar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .message.bot .message-avatar {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .message-content {
+            max-width: 70%;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 15px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            line-height: 1.6;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .message.bot .message-content {
+            background: white;
+        }
+
+        .message-content a {
+            color: #667eea;
+            text-decoration: underline;
+            word-break: break-all;
+            transition: color 0.2s ease;
+        }
+
+        .message-content a:hover {
+            color: #5568d3;
+            text-decoration: underline;
+        }
+
+        .message-content a:visited {
+            color: #764ba2;
+        }
+
+        .follow-up-questions {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .follow-up-questions h4 {
+            font-size: 14px;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .follow-up-question {
+            background: #f0f2f5;
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 14px;
+            border: 1px solid transparent;
+        }
+
+        .follow-up-question:hover {
+            background: #e4e6eb;
+            border-color: #667eea;
+            transform: translateX(5px);
+        }
+
+        .input-area {
+            padding: 20px 30px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        #userInput {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 15px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        #userInput:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 25px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        #sendBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #sendBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #sendBtn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        #clearBtn {
+            background: #f0f2f5;
+            color: #666;
+        }
+
+        #clearBtn:hover {
+            background: #e4e6eb;
+        }
+
+        .loading {
+            display: flex;
+            gap: 5px;
+            padding: 10px;
+        }
+
+        .loading-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #667eea;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dot:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .loading-dot:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        .welcome-message {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .welcome-message h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .welcome-message p {
+            line-height: 1.8;
+            margin-bottom: 10px;
+        }
+
+        /* Custom scrollbar */
+        .chat-area::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chat-area::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .chat-area::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+
+        .chat-area::-webkit-scrollbar-thumb:hover {
+            background: #5568d3;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                height: 100vh;
+                border-radius: 0;
+            }
+
+            .message-content {
+                max-width: 85%;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            .input-area {
+                padding: 15px;
+            }
+
+            button {
+                padding: 12px 20px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>DIA - Dementia Information Assistant</h1>
+            <p>Your friendly guide to understanding dementia</p>
+        </div>
+
+        <div class="chat-area" id="chatArea">
+            <div class="welcome-message">
+                <h2>Welcome to DIA!</h2>
+                <p>I'm here to help you learn about dementia in a friendly, clear way.</p>
+                <p>Ask me anything about dementia awareness, symptoms, care, or support.</p>
+                <p><strong>Get started by asking a question below!</strong></p>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input
+                type="text"
+                id="userInput"
+                placeholder="Ask about dementia..."
+                autocomplete="off"
+            >
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+            <button id="clearBtn" onclick="clearChat()">Clear</button>
+        </div>
+    </div>
+
+    <script>
+        const chatArea = document.getElementById('chatArea');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // Handle Enter key
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !sendBtn.disabled) {
+                sendMessage();
+            }
+        });
+
+        // Load welcome message and auto-focus input on load
+        window.addEventListener('load', async () => {
+            userInput.focus();
+            await loadWelcomeMessage();
+        });
+
+        async function loadWelcomeMessage() {
+            try {
+                const response = await fetch('http://localhost:5000/api/welcome', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    // Fallback welcome message
+                    addMessage('Hello! I\'m DIA, your Dementia Information Assistant. 💙 I\'m here to help you learn about dementia awareness, caregiving, and support resources. What would you like to know?', false);
+                } else {
+                    addMessage(data.welcome_message, false, data.follow_up_questions || []);
+                }
+            } catch (error) {
+                console.error('Error loading welcome message:', error);
+                // Fallback welcome message
+                addMessage('Hello! I\'m DIA, your Dementia Information Assistant. 💙 I\'m here to help you learn about dementia awareness, caregiving, and support resources. What would you like to know?', false);
+            }
+        }
+
+        function scrollToBottom() {
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function addMessage(content, isUser = false, followUpQuestions = []) {
+            // Remove welcome message if it exists
+            const welcomeMsg = chatArea.querySelector('.welcome-message');
+            if (welcomeMsg) {
+                welcomeMsg.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = isUser ? '👤' : '🤖';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            // Escape HTML special characters to avoid injection
+            const escapedContent = content
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Convert simple markdown-style emphasis and line breaks
+            let formattedContent = escapedContent
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br>');
+
+            // Convert URLs to clickable links
+            const urlPattern = /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/gi;
+            formattedContent = formattedContent.replace(urlPattern, (url) => {
+                return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+            });
+
+            contentDiv.innerHTML = formattedContent;
+
+            // Add follow-up questions if any
+            if (followUpQuestions && followUpQuestions.length > 0) {
+                const followUpDiv = document.createElement('div');
+                followUpDiv.className = 'follow-up-questions';
+                followUpDiv.innerHTML = '<h4>You might also want to know:</h4>';
+
+                followUpQuestions.forEach(question => {
+                    const questionDiv = document.createElement('div');
+                    questionDiv.className = 'follow-up-question';
+                    questionDiv.textContent = question;
+                    questionDiv.onclick = () => {
+                        userInput.value = question;
+                        sendMessage();
+                    };
+                    followUpDiv.appendChild(questionDiv);
+                });
+
+                contentDiv.appendChild(followUpDiv);
+            }
+
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(contentDiv);
+            chatArea.appendChild(messageDiv);
+
+            scrollToBottom();
+        }
+
+        function addLoadingMessage() {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message bot';
+            messageDiv.id = 'loadingMessage';
+
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = '🤖';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = '<div class="loading"><div class="loading-dot"></div><div class="loading-dot"></div><div class="loading-dot"></div></div>';
+
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(contentDiv);
+            chatArea.appendChild(messageDiv);
+
+            scrollToBottom();
+        }
+
+        function removeLoadingMessage() {
+            const loadingMsg = document.getElementById('loadingMessage');
+            if (loadingMsg) {
+                loadingMsg.remove();
+            }
+        }
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage(message, true);
+            userInput.value = '';
+
+            // Disable input while processing
+            sendBtn.disabled = true;
+            userInput.disabled = true;
+
+            // Show loading indicator
+            addLoadingMessage();
+
+            try {
+                const response = await fetch('http://localhost:5000/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message })
+                });
+
+                const data = await response.json();
+
+                removeLoadingMessage();
+
+                if (data.error) {
+                    addMessage('Sorry, I encountered an error: ' + data.error, false);
+                } else {
+                    addMessage(data.response, false, data.follow_up_questions);
+                }
+            } catch (error) {
+                removeLoadingMessage();
+                addMessage('Sorry, I could not connect to the server. Please make sure the server is running.', false);
+                console.error('Error:', error);
+            } finally {
+                // Re-enable input
+                sendBtn.disabled = false;
+                userInput.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        async function clearChat() {
+            if (!confirm('Are you sure you want to clear the conversation history?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5000/api/clear', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    chatArea.innerHTML = '';
+                    // Load welcome message after clearing
+                    await loadWelcomeMessage();
+                }
+            } catch (error) {
+                console.error('Error clearing chat:', error);
+                alert('Failed to clear chat history');
+            }
+        }
+    </script>
+</body>
+</html>
