@@ -359,7 +359,8 @@
 
         async function loadWelcomeMessage() {
             try {
-                const response = await fetch('http://localhost:5000/api/welcome', {
+                const apiUrl = (typeof BASE_URL !== 'undefined' && BASE_URL ? BASE_URL : '') + '/api/welcome';
+                const response = await fetch(apiUrl, {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
@@ -491,7 +492,8 @@
             addLoadingMessage();
 
             try {
-                const response = await fetch('http://localhost:5000/api/chat', {
+                const apiUrl = (typeof BASE_URL !== 'undefined' && BASE_URL ? BASE_URL : '') + '/api/chat';
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -526,7 +528,8 @@
             }
 
             try {
-                const response = await fetch('http://localhost:5000/api/clear', {
+                const apiUrl = (typeof BASE_URL !== 'undefined' && BASE_URL ? BASE_URL : '') + '/api/clear';
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

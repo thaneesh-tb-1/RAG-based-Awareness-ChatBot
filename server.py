@@ -7,6 +7,10 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dia_agent import DIAAgent
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Set UTF-8 encoding for stdout/stderr to handle emojis on Windows
 if sys.platform == 'win32':
@@ -28,8 +32,19 @@ def get_agent():
 
 @app.route('/')
 def index():
-    """Serve the main HTML page"""
-    return send_from_directory('.', 'index.html')
+    """Serve the main HTML page with injected base URL"""
+    base_url = os.getenv('BASE_URL', 'http://localhost:8080')
+    
+    # Read the HTML file
+    with open('index.html', 'r', encoding='utf-8') as f:
+        html_content = f.read()
+    
+    # Inject base URL as a JavaScript variable before the closing </head> tag
+    script_tag = f'<script>const BASE_URL = "{base_url}";</script>'
+    html_content = html_content.replace('</head>', f'{script_tag}\n</head>')
+    
+    from flask import Response
+    return Response(html_content, mimetype='text/html')
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
@@ -123,13 +138,14 @@ if __name__ == '__main__':
         # Initialize agent on startup to check for errors
         get_agent()
 
+        base_url = os.getenv('BASE_URL', 'http://localhost:8080')
         print("\nServer ready!")
         print("\nOpen your browser and go to:")
-        print("  http://localhost:5000")
+        print(f"  {base_url}")
         print("\nPress Ctrl+C to stop the server")
         print("="*60 + "\n")
 
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        app.run(debug=True, host='0.0.0.0', port=8080)
     except ValueError as e:
         print(f"\n❌ Configuration Error: {str(e)}")
         print("\nPlease ensure you have:")

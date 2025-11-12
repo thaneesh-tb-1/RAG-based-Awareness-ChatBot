@@ -21,7 +21,7 @@ python server.py
 ```
 
 ### 3. Test It
-- Open browser: **http://localhost:5000**
+- Open browser: **http://localhost:8080**
 - Test a question: "What are the early signs of dementia?"
 - Make sure it works before your demo!
 
@@ -47,7 +47,7 @@ gcloud auth application-default set-quota-project tech-bharath
 ```
 
 ### Server Won't Start
-- Check if another server is running on port 5000
+- Check if another server is running on port 8080
 - Close and restart terminal
 - Try again
 
@@ -65,8 +65,8 @@ gcloud auth application-default set-quota-project tech-bharath
 
 ## Important URLs
 
-- Web Interface: http://localhost:5000
-- Alternative: http://127.0.0.1:5000
+- Web Interface: http://localhost:8080
+- Alternative: http://127.0.0.1:8080
 
 ## Important Files
 
@@ -77,4 +77,4 @@ gcloud auth application-default set-quota-project tech-bharath
 
 ---
 
-**Ready?** Just run `python server.py` and open http://localhost:5000!
+**Ready?** Just run `python server.py` and open http://localhost:8080!

@@ -163,7 +163,7 @@ HELPLINE SELECTION GUIDE:
 - Caregiver Support: ARDSI (9846198471) + Dementia India Alliance (8585 990 990)
 
 National Dementia & Mental Health Helplines:
-• NIMHANS (Bengaluru, 24/7): 080-46110007 | Main Office: 080-26995000
+• NIMHANS (Bengaluru, 24/7): 080-46110007 | Main Office: 080-26998080
 • ARDSI National: 9846198471, 9846198473, 9846198786 | Landline: +91 4885 223801
 • Dementia India Alliance: 8585 990 990 (8 AM-6 PM, Mon-Sat)
 • Tele MANAS (24/7, 365 days): 14416 or 1800-89-14416

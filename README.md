@@ -17,10 +17,10 @@ gcloud auth application-default set-quota-project tech-bharath
 # 3. Start the web server
 python server.py
 
-# 4. Open browser to: http://localhost:5000
+# 4. Open browser to: http://localhost:8080
 ```
 
-**That's it!** The web interface will be running on http://localhost:5000
+**That's it!** The web interface will be running on http://localhost:8080
 
 *Note: If you get a "Flask not found" error, run: `pip install flask flask-cors`*
 
@@ -70,7 +70,12 @@ python server.py
    GOOGLE_CLOUD_PROJECT=tech-bharath
    GOOGLE_CLOUD_LOCATION=asia-south1
    RAG_CORPUS=projects/tech-bharath/locations/asia-south1/ragCorpora/288230376151711744
+   BASE_URL=http://localhost:8080
    ```
+   
+   **Note**: `BASE_URL` is used by the web interface to make API calls. 
+   - For local development: `http://localhost:8080`
+   - For production/Cloud Run: Your deployed service URL (e.g., `https://your-service-url.run.app`)
 
    **Note**: Your API key is already configured in the `.env` file.
 
@@ -158,7 +163,7 @@ Initializing DIA Agent...
 Server ready!
 
 Open your browser and go to:
-  http://localhost:5000
+  http://localhost:8080
 
 Press Ctrl+C to stop the server
 ============================================================
@@ -166,7 +171,7 @@ Press Ctrl+C to stop the server
 
 **Step 6: Open your browser**
 
-Navigate to: **http://localhost:5000**
+Navigate to: **http://localhost:8080**
 
 **Step 7: Start chatting!**
 
@@ -375,9 +380,9 @@ The server must be restarted after authentication for changes to take effect.
 
 **Solution**:
 1. Check that the server is running (you should see output in terminal)
-2. Make sure you're using the correct URL: `http://localhost:5000`
-3. Check for firewall blocking port 5000
-4. Try alternative URL: `http://127.0.0.1:5000`
+2. Make sure you're using the correct URL: `http://localhost:8080`
+3. Check for firewall blocking port 8080
+4. Try alternative URL: `http://127.0.0.1:8080`
 
 #### Server starts but responses don't work
 **Problem**: Usually authentication or environment variable issues
@@ -411,7 +416,7 @@ If the web server is acting strange or giving errors:
    ```bash
    python server.py
    ```
-4. **Refresh your browser**: Go to `http://localhost:5000`
+4. **Refresh your browser**: Go to `http://localhost:8080`
 
 ## Support
 
