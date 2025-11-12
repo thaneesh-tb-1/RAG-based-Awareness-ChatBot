@@ -3,7 +3,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PORT=8080
+    PORT=8080 \
+    HOST=0.0.0.0
 
 WORKDIR /app
 
@@ -22,6 +23,7 @@ COPY . .
 EXPOSE 8080
 
 # Run with Gunicorn, pointing to Flask app object in server.py
-CMD ["bash", "-lc", "exec gunicorn 'server:app' --bind 0.0.0.0:${PORT} --workers 2 --threads 4 --timeout 120"]
+# Note: BASE_URL should be set via environment variables when running the container
+CMD ["bash", "-lc", "exec gunicorn 'server:app' --bind ${HOST}:${PORT} --workers 2 --threads 4 --timeout 120"]
 
 

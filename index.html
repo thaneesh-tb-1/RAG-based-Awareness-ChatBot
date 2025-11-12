@@ -106,6 +106,8 @@
             border-radius: 15px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
             line-height: 1.6;
+            white-space: pre-wrap; /* Preserve newlines and formatting */
+            word-wrap: break-word;
         }
 
         .message.user .message-content {
@@ -131,6 +133,44 @@
 
         .message-content a:visited {
             color: #764ba2;
+        }
+
+        /* References section styling */
+        .references-section {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f9f9fb;
+            border-left: 4px solid #667eea;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .references-section strong {
+            color: #667eea;
+            font-size: 14px;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .references-section a {
+            display: block;
+            margin: 5px 0;
+            padding: 5px 0;
+            color: #5568d3;
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        .references-section a:hover {
+            color: #764ba2;
+            text-decoration: underline;
+        }
+
+        .reference-divider {
+            border: 0;
+            height: 2px;
+            background: linear-gradient(to right, transparent, #e0e0e0, transparent);
+            margin: 15px 0;
         }
 
         .follow-up-questions {
@@ -340,6 +380,9 @@
     </div>
 
     <script>
+        // API Base URL - will be injected by server, fallback to relative URLs
+        const API_BASE_URL = window.API_BASE_URL || '';
+        
         const chatArea = document.getElementById('chatArea');
         const userInput = document.getElementById('userInput');
         const sendBtn = document.getElementById('sendBtn');
@@ -359,8 +402,7 @@
 
         async function loadWelcomeMessage() {
             try {
-                const apiUrl = (typeof BASE_URL !== 'undefined' && BASE_URL ? BASE_URL : '') + '/api/welcome';
-                const response = await fetch(apiUrl, {
+                const response = await fetch(`${API_BASE_URL}/api/welcome`, {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
@@ -409,26 +451,44 @@
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
 
-            // Convert simple markdown-style emphasis and line breaks
-            let formattedContent = escapedContent
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\n/g, '<br>');
+            // Enhanced markdown parsing
+            let formattedContent = escapedContent;
 
-            // Convert URLs to clickable links
+            // Convert **bold** to <strong>
+            formattedContent = formattedContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+            // Convert horizontal rules (---) to <hr>
+            formattedContent = formattedContent.replace(/^---$/gm, '<hr class="reference-divider">');
+
+            // Detect and specially format References section
+            const referencesPattern = /(<strong>References<\/strong>)([\s\S]*?)(?=<hr|$)/g;
+            formattedContent = formattedContent.replace(referencesPattern, (match, title, references) => {
+                return `<div class="references-section">${title}${references}</div>`;
+            });
+
+            // Convert URLs to clickable links (with better pattern)
             const urlPattern = /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/gi;
             formattedContent = formattedContent.replace(urlPattern, (url) => {
                 return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
             });
 
+            // Convert newlines to <br> (do this last to preserve structure)
+            formattedContent = formattedContent.replace(/\n/g, '<br>');
+
             contentDiv.innerHTML = formattedContent;
 
             // Add follow-up questions if any
+            console.log('[DEBUG addMessage] Follow-up questions:', followUpQuestions);
+            console.log('[DEBUG addMessage] Follow-up questions length:', followUpQuestions ? followUpQuestions.length : 0);
+            
             if (followUpQuestions && followUpQuestions.length > 0) {
+                console.log('[DEBUG addMessage] Creating follow-up questions section');
                 const followUpDiv = document.createElement('div');
                 followUpDiv.className = 'follow-up-questions';
                 followUpDiv.innerHTML = '<h4>You might also want to know:</h4>';
 
-                followUpQuestions.forEach(question => {
+                followUpQuestions.forEach((question, index) => {
+                    console.log(`[DEBUG addMessage] Adding question ${index + 1}:`, question);
                     const questionDiv = document.createElement('div');
                     questionDiv.className = 'follow-up-question';
                     questionDiv.textContent = question;
@@ -440,6 +500,9 @@
                 });
 
                 contentDiv.appendChild(followUpDiv);
+                console.log('[DEBUG addMessage] Follow-up questions section added to DOM');
+            } else {
+                console.log('[DEBUG addMessage] No follow-up questions to display');
             }
 
             messageDiv.appendChild(avatar);
@@ -492,8 +555,7 @@
             addLoadingMessage();
 
             try {
-                const apiUrl = (typeof BASE_URL !== 'undefined' && BASE_URL ? BASE_URL : '') + '/api/chat';
-                const response = await fetch(apiUrl, {
+                const response = await fetch(`${API_BASE_URL}/api/chat`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -508,7 +570,10 @@
                 if (data.error) {
                     addMessage('Sorry, I encountered an error: ' + data.error, false);
                 } else {
-                    addMessage(data.response, false, data.follow_up_questions);
+                    // Debug: Log follow-up questions
+                    console.log('[DEBUG] Follow-up questions received:', data.follow_up_questions);
+                    console.log('[DEBUG] Number of follow-up questions:', data.follow_up_questions ? data.follow_up_questions.length : 0);
+                    addMessage(data.response, false, data.follow_up_questions || []);
                 }
             } catch (error) {
                 removeLoadingMessage();
@@ -528,8 +593,7 @@
             }
 
             try {
-                const apiUrl = (typeof BASE_URL !== 'undefined' && BASE_URL ? BASE_URL : '') + '/api/clear';
-                const response = await fetch(apiUrl, {
+                const response = await fetch(`${API_BASE_URL}/api/clear`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

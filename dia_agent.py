@@ -6,6 +6,8 @@ A CLI chatbot powered by Google Gemini with RAG retrieval from Vertex AI
 import os
 import sys
 import re
+import csv
+from datetime import datetime
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
 from google import genai
@@ -22,6 +24,24 @@ except ImportError:
 
 # Load environment variables
 load_dotenv()
+
+# CSV Logging configuration
+LOG_FILE = "dia_query_log.csv"
+MAX_LOG_LINES = 500
+
+# Category priority for fallback (higher priority first)
+CATEGORY_PRIORITY = [
+    "policy_support",
+    "community_awareness",
+    "caregiving",
+    "management",
+    "lifestyle_prevention",
+    "research_innovation",
+    "stigma_awareness",
+    "resources_helplines",
+    "care_guides",
+    "core_medical"
+]
 
 # System prompt for DIA
 SYSTEM_PROMPT = """You are a helpful, knowledgeable companion who understands dementia and can talk about it naturally and supportively. You're here to have genuine conversations, not to sound like a textbook or a formal assistant.
@@ -163,7 +183,7 @@ HELPLINE SELECTION GUIDE:
 - Caregiver Support: ARDSI (9846198471) + Dementia India Alliance (8585 990 990)
 
 National Dementia & Mental Health Helplines:
-• NIMHANS (Bengaluru, 24/7): 080-46110007 | Main Office: 080-26998080
+• NIMHANS (Bengaluru, 24/7): 080-46110007 | Main Office: 080-26995000
 • ARDSI National: 9846198471, 9846198473, 9846198786 | Landline: +91 4885 223801
 • Dementia India Alliance: 8585 990 990 (8 AM-6 PM, Mon-Sat)
 • Tele MANAS (24/7, 365 days): 14416 or 1800-89-14416
@@ -220,6 +240,10 @@ class DIAAgent:
         self.project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
         self.location = os.getenv("GOOGLE_CLOUD_LOCATION")
 
+        # Google Custom Search API credentials (for finding PDF links)
+        self.google_search_api_key = os.getenv("GOOGLE_SEARCH_API_KEY")
+        self.google_search_engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
+
         if not self.rag_corpus:
             raise ValueError("RAG_CORPUS not found in environment variables")
         if not self.project_id:
@@ -242,26 +266,20 @@ class DIAAgent:
         # Note: Model availability varies by region - may need to use us-central1 or global
         self.model = "gemini-2.5-flash"
 
-        # RAG tool configuration
-        self.tools = [
-            types.Tool(
-                retrieval=types.Retrieval(
-                    vertex_rag_store=types.VertexRagStore(
-                        rag_resources=[
-                            types.VertexRagStoreRagResource(
-                                rag_corpus=self.rag_corpus
-                            )
-                        ],
-                    )
-                )
-            )
-        ]
+        # RAG tool configuration with metadata-based filtering
+        # Default category is None (retrieves from all categories)
+        # Will be dynamically updated based on query intent
+        self.current_category_filter = None
+        self.top_k = 5  # Number of documents to retrieve
 
-        # Generation configuration
+        # Base RAG tools - will be rebuilt with filters dynamically
+        self.tools = self._build_rag_tools()
+
+        # Generation configuration (optimized with 8192 token limit)
         self.generate_content_config = types.GenerateContentConfig(
             temperature=0.7,
             top_p=0.95,
-            max_output_tokens=65535,
+            max_output_tokens=8192,
             safety_settings=[
                 types.SafetySetting(
                     category="HARM_CATEGORY_HATE_SPEECH",
@@ -291,7 +309,7 @@ class DIAAgent:
         self.generate_content_config_no_rag = types.GenerateContentConfig(
             temperature=0.7,
             top_p=0.95,
-            max_output_tokens=65535,
+            max_output_tokens=8192,
             safety_settings=[
                 types.SafetySetting(
                     category="HARM_CATEGORY_HATE_SPEECH",
@@ -321,6 +339,299 @@ class DIAAgent:
 
         # Context cache: stores (query, response, keywords) for reuse
         self.context_cache: List[Dict[str, str]] = []
+
+    def _build_rag_tools(self, category: str = None):
+        """
+        Build RAG tools configuration
+
+        NOTE: The current Google GenAI SDK version doesn't support rag_retrieval_config
+        with top_k and filter parameters directly in VertexRagStoreRagResource.
+        This method is prepared for future SDK updates.
+
+        For now, we'll use query enhancement to hint at categories.
+
+        Args:
+            category: "core", "community", "contextual", or None (not used yet)
+        """
+        # Simple working structure (no rag_retrieval_config for now)
+        return [
+            types.Tool(
+                retrieval=types.Retrieval(
+                    vertex_rag_store=types.VertexRagStore(
+                        rag_resources=[
+                            types.VertexRagStoreRagResource(
+                                rag_corpus=self.rag_corpus
+                            )
+                        ],
+                    )
+                )
+            )
+        ]
+
+    def _detect_categories_with_scores(self, query: str) -> List[Tuple[str, int]]:
+        """
+        Detect categories with weighted scoring
+        Returns: List of (category, score) tuples sorted by score
+        """
+        query_lower = query.lower()
+
+        # Enhanced categories with specific keywords
+        CATEGORIES = {
+            "core_medical": ["symptom", "type", "diagnosis", "alzheimer", "vascular", "memory",
+                            "cognitive", "lewy", "frontotemporal", "stage", "stages",
+                            "progression", "brain", "neurological", "medical", "doctor",
+                            "disease", "dementia type", "what is dementia", "causes", "sign",
+                            "signs", "confused", "confusion", "forgetful", "forget"],
+            "management": ["treatment", "therapy", "routine", "sleep", "music", "activity", "rehab",
+                          "medication", "medicine", "daily care", "activities", "schedule",
+                          "behavioral", "wandering", "aggression", "sundowning", "managing"],
+            "caregiving": ["caregiver", "family", "support", "stress", "safety", "respite",
+                          "caregiving", "care", "helping", "coping", "burden",
+                          "day care", "facility", "home care", "bathing", "feeding"],
+            "policy_support": ["government", "rights", "scheme", "pension", "disability",
+                              "policy", "benefit", "welfare", "certificate", "legal",
+                              "guardian", "power of attorney", "social security"],
+            "community_awareness": ["asha", "camp", "panchayat", "volunteer", "public", "school",
+                                   "community", "awareness camp", "screening", "outreach",
+                                   "rural", "urban", "neighborhood", "local", "village", "poster"],
+            "lifestyle_prevention": ["diet", "yoga", "exercise", "sleep", "stress", "habit",
+                                    "prevent", "prevention", "reduce risk", "lifestyle",
+                                    "nutrition", "healthy", "activity", "social", "engagement",
+                                    "brain health", "cognitive reserve", "learning", "risk factor",
+                                    "avoid", "protect", "smoking", "alcohol"],
+            "research_innovation": ["nimhans", "aiims", "trial", "app", "ai", "study",
+                                   "research", "clinical trial", "technology", "innovation",
+                                   "digital", "wearable", "monitoring", "detection"],
+            "stigma_awareness": ["stigma", "myth", "story", "awareness", "campaign",
+                                "discrimination", "misconception", "belief", "taboo",
+                                "education", "advocacy", "media"],
+            "resources_helplines": ["helpline", "phone", "contact", "support center",
+                                   "hotline", "call", "emergency", "crisis",
+                                   "assistance", "elderline", "ardsi", "helpline number"],
+            "care_guides": ["manual", "guide", "checklist", "plan", "toolkit",
+                           "handbook", "documentation", "care plan", "guideline", "instruction"]
+        }
+
+        # Count matches for each category
+        category_scores = {}
+        for category, keywords in CATEGORIES.items():
+            score = sum(1 for keyword in keywords if keyword in query_lower)
+            category_scores[category] = score
+
+        # Sort by score (descending)
+        sorted_categories = sorted(category_scores.items(), key=lambda x: x[1], reverse=True)
+
+        return sorted_categories
+
+    def _get_primary_category_with_fallback(self, categories_with_scores: List[Tuple[str, int]]) -> str:
+        """
+        Get primary category using priority fallback for ties
+
+        Args:
+            categories_with_scores: List of (category, score) tuples
+
+        Returns:
+            Primary category name or None
+        """
+        # Filter categories with scores > 0
+        relevant_categories = [(cat, score) for cat, score in categories_with_scores if score > 0]
+
+        if not relevant_categories:
+            return None
+
+        max_score = relevant_categories[0][1]
+
+        # Get all categories with the max score
+        top_categories = [cat for cat, score in relevant_categories if score == max_score]
+
+        # If only one category, return it
+        if len(top_categories) == 1:
+            return top_categories[0]
+
+        # If multiple categories have the same score, use priority fallback
+        for priority_cat in CATEGORY_PRIORITY:
+            if priority_cat in top_categories:
+                print(f"[Debug: Using priority fallback: {priority_cat}]")
+                return priority_cat
+
+        # Fallback to first category (shouldn't reach here if CATEGORY_PRIORITY is complete)
+        return top_categories[0]
+
+    def _llm_classify_category(self, query: str) -> str:
+        """
+        Use LLM to classify query when keyword matching fails
+
+        Args:
+            query: User query
+
+        Returns:
+            Detected category or None
+        """
+        classification_prompt = f"""Which category does this query fall into:
+"{query}"?
+
+Choose from: core_medical, management, caregiving, lifestyle_prevention, community_awareness, policy_support, research_innovation, stigma_awareness, resources_helplines, care_guides.
+
+Respond with ONLY the category name, nothing else."""
+
+        try:
+            print(f"[Debug: Using LLM for category classification]")
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=[classification_prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=50,
+                )
+            )
+
+            detected_category = response.text.strip().lower()
+
+            # Validate that it's a real category
+            valid_categories = [
+                "core_medical", "management", "caregiving", "lifestyle_prevention",
+                "community_awareness", "policy_support", "research_innovation",
+                "stigma_awareness", "resources_helplines", "care_guides"
+            ]
+
+            if detected_category in valid_categories:
+                print(f"[Debug: LLM classified as: {detected_category}]")
+                return detected_category
+            else:
+                print(f"[Debug: LLM returned invalid category: {detected_category}]")
+                return None
+
+        except Exception as e:
+            print(f"[Debug: LLM classification failed: {str(e)}]")
+            return None
+
+    def _detect_query_category(self, query: str) -> str:
+        """
+        Detect the category of the user query with enhanced scoring and fallback
+
+        Returns: category name or None (no filter)
+        """
+        # Get categories with scores
+        categories_with_scores = self._detect_categories_with_scores(query)
+
+        # Log top 3 categories
+        print(f"\n[Debug: Top categories: {categories_with_scores[:3]}]")
+
+        # Get primary category with priority fallback
+        primary_category = self._get_primary_category_with_fallback(categories_with_scores)
+
+        if primary_category:
+            print(f"[Debug: Primary category detected: {primary_category.upper()}]")
+            return primary_category
+
+        # If no category detected, try LLM classification
+        print(f"[Debug: No keyword match, attempting LLM classification]")
+        llm_category = self._llm_classify_category(query)
+
+        if llm_category:
+            return llm_category
+
+        print(f"[Debug: No category detected, using all documents]")
+        return None
+
+    def _enhance_query_with_category(self, query: str, category: str = None) -> str:
+        """
+        Enhance the query with category-specific keywords to improve retrieval relevance
+
+        This is a workaround for SDK versions that don't support metadata filtering.
+        When the SDK supports rag_retrieval_config with filters, this can be replaced.
+
+        Args:
+            query: Original user query
+            category: Category name or None
+
+        Returns:
+            Enhanced query with category hints
+        """
+        if category is None:
+            return query
+
+        # Add category-specific context hints to improve retrieval
+        category_hints = {
+            "core_medical": "medical symptoms diagnosis dementia types memory cognitive",
+            "management": "treatment therapy routine care management medication daily activities",
+            "caregiving": "caregiver family support safety home care coping respite",
+            "policy_support": "government pension disability rights scheme welfare policy legal",
+            "community_awareness": "community ASHA camp village panchayat awareness outreach screening",
+            "lifestyle_prevention": "prevention diet yoga exercise lifestyle brain health nutrition habits",
+            "research_innovation": "research NIMHANS AIIMS trial innovation technology app AI study",
+            "stigma_awareness": "stigma myth awareness discrimination education advocacy campaign",
+            "resources_helplines": "helpline phone support center contact assistance emergency hotline",
+            "care_guides": "manual toolkit guide care plan template checklist handbook instruction"
+        }
+
+        hint = category_hints.get(category, "")
+        if hint:
+            # Prepend the hint to help RAG focus on relevant documents
+            enhanced = f"[Focus: {hint}] {query}"
+            print(f"[Debug: Enhanced query for '{category}' category]")
+            return enhanced
+
+        return query
+
+    def _log_query(self, user_query: str, detected_categories: List[Tuple[str, int]],
+                   num_sources: int, used_cache: bool):
+        """
+        Log query details to CSV file
+
+        Args:
+            user_query: The user's query
+            detected_categories: List of (category, score) tuples
+            num_sources: Number of sources retrieved
+            used_cache: Whether cache was used
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Format categories as comma-separated list of top 3
+            top_categories = ",".join([f"{cat}({score})" for cat, score in detected_categories[:3]])
+
+            # Create log entry
+            log_entry = [timestamp, user_query, top_categories, num_sources, used_cache]
+
+            # Check if file exists and get line count
+            file_exists = os.path.exists(LOG_FILE)
+            line_count = 0
+
+            if file_exists:
+                with open(LOG_FILE, 'r', encoding='utf-8') as f:
+                    line_count = sum(1 for line in f)
+
+            # If approaching max lines, truncate old entries
+            if line_count >= MAX_LOG_LINES:
+                # Read existing entries
+                with open(LOG_FILE, 'r', encoding='utf-8', newline='') as f:
+                    reader = csv.reader(f)
+                    header = next(reader, None)
+                    rows = list(reader)
+
+                # Keep only the most recent entries (MAX_LOG_LINES - 100)
+                rows = rows[-(MAX_LOG_LINES - 100):]
+
+                # Rewrite file with truncated data
+                with open(LOG_FILE, 'w', encoding='utf-8', newline='') as f:
+                    writer = csv.writer(f)
+                    if header:
+                        writer.writerow(header)
+                    writer.writerows(rows)
+
+            # Append new entry
+            with open(LOG_FILE, 'a', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+
+                # Write header if new file
+                if not file_exists or line_count == 0:
+                    writer.writerow(['timestamp', 'user_query', 'detected_categories', 'num_sources', 'used_cache'])
+
+                writer.writerow(log_entry)
+
+        except Exception as e:
+            print(f"[Debug: Error logging query: {str(e)}]")
 
     def _extract_keywords(self, text: str) -> set:
         """Extract important keywords from text (simple implementation)"""
@@ -452,246 +763,299 @@ class DIAAgent:
             print(f"[Debug: Error in _extract_from_retrieval_metadata: {str(e)}]")
         return sources
     
-    def _extract_sources_from_grounding(self, grounding, seen_sources: set = None) -> List[str]:
+    def _extract_sources_from_grounding(self, grounding, seen_sources: set = None) -> List[Dict]:
         """
-        Extract source URLs from grounding metadata
-        
+        Extract source URLs and metadata from grounding metadata
+
         Args:
             grounding: Grounding metadata object from response
             seen_sources: Set of already seen sources to avoid duplicates
-            
+
         Returns:
-            List of source URLs/document references
+            List of source dictionaries with URI and metadata
         """
         sources = []
         if seen_sources is None:
             seen_sources = set()
-        
+
         try:
-            # Debug: Print grounding structure
-            print(f"\n[Debug: Grounding type: {type(grounding)}, attributes: {[attr for attr in dir(grounding) if not attr.startswith('_')][:15]}]")
-            
             # Check for grounding_chunks
             if hasattr(grounding, 'grounding_chunks') and grounding.grounding_chunks:
-                print(f"[Debug: Found {len(grounding.grounding_chunks)} grounding chunks]")
-                for i, chunk in enumerate(grounding.grounding_chunks):
-                    print(f"[Debug: Chunk {i} type: {type(chunk)}, attributes: {[attr for attr in dir(chunk) if not attr.startswith('_')][:10]}]")
-                    
+                for chunk in grounding.grounding_chunks:
                     # Try retrieved_context (Vertex RAG)
                     if hasattr(chunk, 'retrieved_context'):
                         context = chunk.retrieved_context
-                        print(f"[Debug: Found retrieved_context, type: {type(context)}]")
-                        # Check various possible URI attributes
-                        for attr in ['uri', 'source_uri', 'url', 'source_url', 'source', 'document_uri', 'file_uri', 'document_id']:
+                        source_uri = None
+                        metadata = {}
+
+                        # Check for URI attributes
+                        for attr in ['uri', 'source_uri', 'url', 'source_url', 'source', 'document_uri', 'file_uri']:
                             if hasattr(context, attr):
-                                source = getattr(context, attr)
-                                print(f"[Debug: Found {attr}: {source}]")
-                                if source and isinstance(source, str) and source not in seen_sources:
-                                    seen_sources.add(source)
-                                    sources.append(source)
-                    
+                                source_uri = getattr(context, attr)
+                                if source_uri:
+                                    break
+
+                        # Extract metadata if available
+                        if hasattr(context, 'metadata'):
+                            try:
+                                ctx_metadata = context.metadata
+                                if hasattr(ctx_metadata, 'title'):
+                                    metadata['title'] = ctx_metadata.title
+                                if hasattr(ctx_metadata, 'year'):
+                                    metadata['year'] = ctx_metadata.year
+                                if hasattr(ctx_metadata, 'category'):
+                                    metadata['category'] = ctx_metadata.category
+                                if hasattr(ctx_metadata, 'source_type'):
+                                    metadata['source_type'] = ctx_metadata.source_type
+                            except:
+                                pass
+
+                        if source_uri and isinstance(source_uri, str) and source_uri not in seen_sources:
+                            seen_sources.add(source_uri)
+                            sources.append({'uri': source_uri, 'metadata': metadata})
+
                     # Try web sources
                     if hasattr(chunk, 'web') and chunk.web:
-                        print(f"[Debug: Found web source]")
                         for attr in ['uri', 'url']:
                             if hasattr(chunk.web, attr):
-                                source = getattr(chunk.web, attr)
-                                if source and isinstance(source, str) and source not in seen_sources:
-                                    seen_sources.add(source)
-                                    sources.append(source)
-                    
-                    # Try vertex_rag_retrieval_results
-                    if hasattr(chunk, 'vertex_rag_retrieval_results'):
-                        results = chunk.vertex_rag_retrieval_results
-                        print(f"[Debug: Found vertex_rag_retrieval_results]")
-                        sources.extend(self._extract_from_retrieval_results(results, seen_sources))
-            
+                                source_uri = getattr(chunk.web, attr)
+                                if source_uri and isinstance(source_uri, str) and source_uri not in seen_sources:
+                                    seen_sources.add(source_uri)
+                                    sources.append({'uri': source_uri, 'metadata': {}})
+
             # Also check for direct source references
             if hasattr(grounding, 'retrieval_queries') and grounding.retrieval_queries:
                 for query in grounding.retrieval_queries:
                     for attr in ['source_uri', 'uri', 'source']:
                         if hasattr(query, attr):
-                            source = getattr(query, attr)
-                            if source and isinstance(source, str) and source not in seen_sources:
-                                seen_sources.add(source)
-                                sources.append(source)
-                                
+                            source_uri = getattr(query, attr)
+                            if source_uri and isinstance(source_uri, str) and source_uri not in seen_sources:
+                                seen_sources.add(source_uri)
+                                sources.append({'uri': source_uri, 'metadata': {}})
+
         except Exception as e:
             # If extraction fails, return empty list
-            print(f"[Debug: Error extracting sources from grounding: {str(e)}]")
-            import traceback
-            traceback.print_exc()
-        
+            print(f"[Debug: Error extracting sources: {str(e)}]")
+
         return sources
+
+    def _search_pdf_with_google(self, pdf_title: str) -> str:
+        """
+        Search for a PDF document using Google Custom Search API
+        [DISABLED] - Google Search API is currently inactive
+
+        Args:
+            pdf_title: Cleaned title of the PDF (e.g., "Dementia in India 2020")
+
+        Returns:
+            Empty string (Google Search API is disabled)
+        """
+        # Google Search API is disabled - return empty string immediately
+        print("[Debug: Google Search API is disabled - returning empty string]")
+        return ""
 
     def _find_relevant_links(self, response_text: str, num_links: int = 3) -> List[str]:
         """
         Find relevant web links based on the response content using web search
-        
+
         Args:
             response_text: The response text from the bot
             num_links: Number of links to find
-            
+
         Returns:
             List of relevant web URLs
         """
         links = []
-        
-        try:
-            # Extract key terms from response (first 200 chars, remove markdown)
-            clean_text = re.sub(r'\*\*.*?\*\*', '', response_text)  # Remove bold
-            clean_text = re.sub(r'#+', '', clean_text)  # Remove headers
-            clean_text = clean_text.replace('\n', ' ').strip()[:300]  # First 300 chars
-            
-            # Extract important keywords
-            keywords = self._extract_keywords(clean_text)
-            if not keywords:
-                return links
-            
-            # Create search query - focus on dementia-related terms
-            search_terms = list(keywords)[:5]  # Top 5 keywords
-            query = "dementia " + " ".join(search_terms)
-            
-            # Use DuckDuckGo instant answer API (free, no API key needed)
-            if REQUESTS_AVAILABLE:
-                try:
-                    search_url = f"https://api.duckduckgo.com/?q={quote(query)}&format=json&no_html=1&skip_disambig=1"
-                    response = requests.get(search_url, timeout=5)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        # Get related topics
-                        if 'RelatedTopics' in data and data['RelatedTopics']:
-                            for topic in data['RelatedTopics'][:num_links]:
-                                if 'FirstURL' in topic:
-                                    url = topic['FirstURL']
-                                    if url and url.startswith('http'):
-                                        links.append(url)
-                        
-                        # Get abstract URL if available
-                        if 'AbstractURL' in data and data['AbstractURL']:
-                            if data['AbstractURL'] not in links:
-                                links.append(data['AbstractURL'])
-                except Exception as e:
-                    print(f"[Debug: DuckDuckGo search failed: {str(e)}]")
-            else:
-                # If requests not available, skip web search
-                pass
-            
-            # If we don't have enough links, add trusted source links based on content
-            if len(links) < num_links:
-                # Map keywords to trusted sources
-                trusted_source_map = {
-                    'who': 'https://www.who.int/news-room/fact-sheets/detail/dementia',
-                    'alzheimer': 'https://www.alz.org/alzheimers-dementia/what-is-dementia',
-                    'nimhans': 'https://www.nimhans.ac.in/',
-                    'dementia-india': 'https://dementia-india.org/',
-                    'nhs': 'https://www.nhs.uk/conditions/dementia/',
-                    'ardsi': 'https://ardsi.org/',
-                    'caregiver': 'https://www.alz.org/help-support/caregiving',
-                    'symptom': 'https://www.alz.org/alzheimers-dementia/10_signs',
-                    'treatment': 'https://www.alz.org/alzheimers-dementia/treatments',
-                    'prevention': 'https://www.alz.org/alzheimers-dementia/what-is-dementia/dementia-prevention'
-                }
-                
-                # Check keywords and add relevant trusted sources
-                keywords_lower = [k.lower() for k in keywords]
-                for key, url in trusted_source_map.items():
-                    if key in ' '.join(keywords_lower) and url not in links:
-                        links.append(url)
-                        if len(links) >= num_links:
-                            break
-                
-                # If still not enough, add default trusted sources
-                default_sources = [
-                    'https://www.who.int/news-room/fact-sheets/detail/dementia',
-                    'https://www.alz.org/alzheimers-dementia/what-is-dementia',
-                    'https://dementia-india.org/'
-                ]
-                
-                for url in default_sources:
-                    if url not in links and len(links) < num_links:
-                        links.append(url)
-            
-            # Remove duplicates and limit
-            seen = set()
-            unique_links = []
-            for link in links:
-                if link not in seen:
-                    seen.add(link)
-                    unique_links.append(link)
-                    if len(unique_links) >= num_links:
-                        break
-            
-            return unique_links
-            
-        except Exception as e:
-            print(f"[Debug: Error finding relevant links: {str(e)}]")
-            return links
+
+        # Google Search API is disabled - skip web search
+        print("[Debug: Google Search API is disabled - skipping web search]")
+
+        # Use fallback sources only
+        if len(links) < num_links:
+            # Add trusted sources as fallback
+            default_sources = [
+                'https://www.who.int/news-room/fact-sheets/detail/dementia',
+                'https://www.alz.org/alzheimers-dementia/what-is-dementia',
+                'https://dementia-india.org/',
+                'https://www.nimhans.ac.in/',
+                'https://ardsi.org/'
+            ]
+
+            for url in default_sources:
+                if url not in links and len(links) < num_links:
+                    links.append(url)
+
+        return links[:num_links]
     
-    def _format_citations(self, sources: List[str], response_text: str = "") -> str:
+    def _clean_pdf_filename(self, uri: str) -> str:
         """
-        Format citations in a standard citation style
-        If sources are PDFs, try to find relevant web links instead
-        BUT keep any valid web links from RAG
-        
+        Extract and clean PDF filename for human-readable display
+
         Args:
-            sources: List of source URLs/document references (may be PDFs)
+            uri: The PDF URI (e.g., gs://bucket/Dementia-in-India-2020.pdf)
+
+        Returns:
+            Cleaned, human-readable title (e.g., "Dementia in India (2020)")
+        """
+        try:
+            # Extract filename from path
+            filename = uri.split('/')[-1]
+
+            # Remove .pdf extension
+            filename = filename.replace('.pdf', '').replace('.PDF', '')
+
+            # Replace hyphens and underscores with spaces
+            filename = filename.replace('-', ' ').replace('_', ' ')
+
+            # Try to extract year if present (4 digits)
+            year_match = re.search(r'\b(19|20)\d{2}\b', filename)
+            year = None
+            if year_match:
+                year = year_match.group(0)
+                # Remove year from filename
+                filename = filename.replace(year, '').strip()
+
+            # Clean up extra spaces
+            filename = ' '.join(filename.split())
+
+            # Capitalize each word
+            filename = filename.title()
+
+            # Add year back if found
+            if year:
+                filename = f"{filename} ({year})"
+
+            return filename
+
+        except Exception as e:
+            print(f"[Debug: Error cleaning PDF filename: {str(e)}]")
+            return uri
+
+    def _format_citations(self, sources: List[Dict], response_text: str = "") -> str:
+        """
+        Format citations with metadata in human-readable format
+
+        Args:
+            sources: List of source dictionaries with 'uri' and 'metadata'
             response_text: The response text to extract keywords for web search
-            
+
         Returns:
             Formatted citations section
         """
         if not sources:
             return ""
-        
+
         # Separate RAG sources: web links vs PDFs/internal paths
         rag_web_links = []  # Valid web links from RAG (keep these!)
-        pdf_sources = []    # PDFs that need replacement
-        
+        pdf_sources = []    # PDFs that need Google Search
+
         for source in sources:
-            # Check if it's a PDF or internal path (needs replacement)
-            if source.endswith('.pdf') or '/pdf' in source.lower() or 'gs://' in source or not source.startswith('http'):
+            uri = source.get('uri', '')
+            # Check if it's a PDF or internal path (needs Google Search)
+            if uri.endswith('.pdf') or '/pdf' in uri.lower() or 'gs://' in uri or not uri.startswith('http'):
                 pdf_sources.append(source)
-            elif source.startswith('http://') or source.startswith('https://'):
+            elif uri.startswith('http://') or uri.startswith('https://'):
                 # This is a valid web link from RAG - keep it!
                 rag_web_links.append(source)
-        
-        print(f"[Debug: Citation formatting - RAG web links: {len(rag_web_links)}, PDFs: {len(pdf_sources)}]")
-        
-        # PRIORITY: Start with RAG web links (these are the actual sources from RAG - use these first!)
-        final_sources = rag_web_links.copy()
-        
-        # Only if we have PDFs (and no RAG web links), try to find relevant web links to replace them
-        # But don't replace the valid RAG web links!
-        if pdf_sources and response_text and len(rag_web_links) == 0:
-            # Only search for links if we don't have any RAG web links
-            print(f"[Debug: No RAG web links found, searching for web links to replace {len(pdf_sources)} PDFs]")
-            found_links = self._find_relevant_links(response_text, num_links=len(pdf_sources))
-            # Add found links to replace PDFs
+
+        print(f"[Debug: RAG web links: {len(rag_web_links)}, PDFs: {len(pdf_sources)}]")
+
+        # Process PDFs: Use PDF file names directly (Google Search disabled)
+        processed_pdfs = []
+        if pdf_sources:
+            print(f"[Debug: Processing {len(pdf_sources)} PDFs - using file names (Google Search disabled)]")
+            for pdf_source in pdf_sources:
+                uri = pdf_source.get('uri', '')
+                metadata = pdf_source.get('metadata', {})
+
+                # Get clean title from metadata or filename
+                title = metadata.get('title', '') if metadata else ''
+                if not title:
+                    title = self._clean_pdf_filename(uri)
+
+                # Use PDF file name directly (no Google Search)
+                processed_pdfs.append({
+                    'uri': uri,  # Keep original URI for reference
+                    'title': title,  # Use cleaned PDF file name
+                    'metadata': metadata,
+                    'is_pdf': True  # Mark as PDF source
+                })
+
+        # Build final sources list: RAG web links + processed PDFs
+        final_sources = []
+
+        # Add RAG web links first (priority)
+        for source in rag_web_links:
+            final_sources.append({
+                'uri': source.get('uri', ''),
+                'title': None,
+                'metadata': source.get('metadata', {})
+            })
+
+        # Add processed PDFs
+        final_sources.extend(processed_pdfs)
+
+        # If still no sources, use general web search fallback
+        if not final_sources and response_text:
+            print(f"[Debug: No sources from RAG, searching web as fallback]")
+            found_links = self._find_relevant_links(response_text, num_links=3)
             for link in found_links:
-                if link not in final_sources:
-                    final_sources.append(link)
-        elif pdf_sources and len(rag_web_links) > 0:
-            # We have RAG web links, so we'll use those and skip web search
-            print(f"[Debug: Using {len(rag_web_links)} RAG web links, skipping web search for PDFs]")
-        
-        # If we have no sources at all (no RAG web links and no found links), use original sources as fallback
-        if not final_sources:
-            print(f"[Debug: No final sources, using original sources as fallback]")
-            final_sources = sources[:5]
-        
+                final_sources.append({
+                    'uri': link,
+                    'title': None,
+                    'metadata': {}
+                })
+
         # Limit to 5 sources
         final_sources = final_sources[:5]
-        
+
         if not final_sources:
             return ""
-        
+
+        # Format citations with metadata
         citations_text = "\n---\n\n**References**\n\n"
         for i, source in enumerate(final_sources, 1):
-            citations_text += f"[{i}] {source}\n"
-        
+            uri = source.get('uri', '')
+            title = source.get('title')
+            metadata = source.get('metadata', {})
+            is_fallback = source.get('is_fallback', False)
+
+            # Format citation
+            is_pdf = source.get('is_pdf', False)
+            if title:
+                # Has a title (from PDF processing)
+                citation = f"[{i}] {title}"
+                year = metadata.get('year', '') if metadata else ''
+                if year:
+                    citation += f" ({year})"
+
+                # For PDFs, show file name only (no URL)
+                if is_pdf:
+                    # Just show the PDF file name - no URL
+                    citation += f"\n    (PDF Document)"
+                elif not is_fallback:
+                    citation += f"\n    {uri}"
+                else:
+                    citation += f"\n    (Link not available)"
+            elif metadata and metadata.get('title'):
+                # Has metadata with title (from web links)
+                meta_title = metadata.get('title', '')
+                year = metadata.get('year', '')
+                category = metadata.get('category', '')
+
+                citation = f"[{i}] {meta_title}"
+                if year:
+                    citation += f" ({year})"
+                if category:
+                    cat_label = category.replace('_', ' ').title()
+                    citation += f" — {cat_label}"
+                citation += f"\n    {uri}"
+            else:
+                # Just a URL
+                citation = f"[{i}] {uri}"
+
+            citations_text += citation + "\n"
+
         return citations_text.strip()
     
     def _check_cache_similarity(self, user_message: str) -> Tuple[bool, str]:
@@ -764,15 +1128,22 @@ Now, please answer this question using the context above: {user_message}"""
             # Use config without RAG tools since we already have context
             config = self.generate_content_config_no_rag
         else:
-            # Add user message to conversation history normally
+            # Detect query category and enhance query for better retrieval
+            detected_category = self._detect_query_category(user_message)
+            self.current_category_filter = detected_category
+
+            # Enhance query with category hints (workaround for SDK limitation)
+            enhanced_query = self._enhance_query_with_category(user_message, detected_category)
+
+            # Add enhanced message to conversation history for RAG retrieval
             self.conversation_history.append(
                 types.Content(
                     role="user",
-                    parts=[types.Part(text=user_message)]
+                    parts=[types.Part(text=enhanced_query)]
                 )
             )
 
-            # Use config with RAG tools to retrieve from corpus
+            # Use config with RAG tools
             config = self.generate_content_config
 
         # Generate response with streaming
